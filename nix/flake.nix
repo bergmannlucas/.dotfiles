@@ -3,24 +3,24 @@
 
   inputs = {
     # Nixpkgs
-    # nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-24.05";
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # Unstable Packages
-    # nixpkgs-stable.url = "github:NixOS/nixpkgs/nixpkgs-24.05";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixpkgs-stable.url = "github:nixos/nixpkgs/nixos-24.11";
 
-    nixpkgs-darwin.url = "github:nixos/nixpkgs/nixpkgs-24.05-darwin";
-    nix-darwin = {
-      url = "github:LnL7/nix-darwin";
-      inputs.nixpkgs.follows = "nixpkgs-darwin";
+    # Home manager
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     # Disko
-    disko.url = "github:nix-community/disko";
-    disko.inputs.nixpkgs.follows = "nixpkgs";
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
-    # Home Manager
-    home-manager = {
-      url = "github:nix-community/home-manager/release-24.05";
+    # Nix Darwin (for MacOS machines)
+    darwin = {
+      url = "github:LnL7/nix-darwin";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -31,58 +31,78 @@
 
   outputs = {
     self,
-    nixpkgs,
-    # nixpkgs-stable,
-    nixpkgs-darwin,
-    nix-darwin,
+    darwin,
+    home-manager,
     nix-homebrew,
     disko,
-    home-manager,
+    nixpkgs,
     ...
   } @ inputs: let 
     inherit (self) outputs;
 
-    systems = [
-      "aarch64-linux"
-      "i686-linux"
-      "x86_64-linux"
-      "aarch64-darwin"
-      "x86_64-darwin"
-    ];
-  in {
-    nixosConfigurations = {
-      kazordoon = nixpkgs.lib.nixosSystem {
-        specialArgs = {inherit inputs outputs;};
-        modules = [
-          ./hosts/kazordoon
-          inputs.disko.nixosModules.disko
-        ];
-      };
-    };
-    homeConfigurations = {
-      "bergmannlucas@kazordoon" = home-manager.lib.homeManagerConfiguration {
-        pkgs = nixpkgs.legacyPackages."x86_64-linux";
-        extraSpecialArgs = {inherit inputs outputs;};
-        modules = [./home/bergmannlucas/home.nix];
+    # Define user configurations
+    users = {
+      bergmannlucas = {
+        email = "bergmannlcs@proton.me";
+        fullName = "Lucas Bergmann";
+        name = "bergmannlucas";
       };
     };
 
-    darwinConfigurations = {
-      air = nix-darwin.lib.darwinSystem {
-        specialArgs = {inherit inputs outputs;};
+    # Function for NixOS system configuration
+    mkNixosConfiguration = hostname: username:
+      nixpkgs.lib.nixosSystem {
+        specialArgs = {
+          inherit inputs outputs hostname;
+          userConfig = users.${username};
+        };
         modules = [
-          ./hosts/air
-          home-manager.darwinModules.home-manager {
-            home-manager.useGlobalPkgs = true;
-            home-manager.useUserPackages = true;
-            home-manager.users.bergmannlucas = import ./home/darwin/home.nix;
-            # home-manager.extraSpecialArgs = {
-            #   inherit inputs;
-            #   meta = host;
-            # };
-          }
+          # ./hosts/${hostname}/configuration.nix
+          ./hosts/${hostname}
+          inputs.disko.nixosModules.disko
         ];
       };
+
+    # Function for nix-darwin system configuration
+    mkDarwinConfiguration = hostname: username:
+      darwin.lib.darwinSystem {
+        system = "aarch64-darwin";
+        specialArgs = {
+          inherit inputs outputs hostname;
+          userConfig = users.${username};
+        };
+        modules = [
+          ./hosts/${hostname}/configuration.nix
+          home-manager.darwinModules.home-manager
+          nix-homebrew.darwinModules.nix-homebrew
+        ];
+      };
+
+    # Function for Home Manager configuration
+    mkHomeConfiguration = system: username: hostname:
+      home-manager.lib.homeManagerConfiguration {
+        pkgs = import nixpkgs {inherit system;};
+        extraSpecialArgs = {
+          inherit inputs outputs;
+          userConfig = users.${username};
+        };
+        modules = [
+          ./home/${username}/${hostname}.nix
+        ];
+      };
+  in {
+    nixosConfigurations = {
+      kazordoon = mkNixosConfiguration "kazordoon" "bergmannlucas";
     };
+
+    darwinConfigurations = {
+      air = mkDarwinConfiguration "air" "bergmannlucas";
+    };
+
+    homeConfigurations = {
+      "bergmannlucas@kazordoon" = mkHomeConfiguration "x86_64-linux" "bergmannlucas" "kazordoon";
+    };
+
+    overlays = import ./overlays {inherit inputs;};
   };
 }
